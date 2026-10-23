@@ -1,43 +1,79 @@
-import Fastify, { type FastifyInstance } from 'fastify';
-import cors from '@fastify/cors';
-import helmet from '@fastify/helmet';
+import cors from 'cors';
+import express, { type ErrorRequestHandler, type Express } from 'express';
+import helmet from 'helmet';
+import { pinoHttp } from 'pino-http';
+import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env.js';
-import { registerHealthRoutes } from './routes/health.js';
+import { flavaLogoSvg, openApiDocument } from './docs/openapi.js';
+import { logger } from './logger.js';
+import { createAuthRouter } from './routes/auth.js';
+import { createHealthRouter } from './routes/health.js';
 
-export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({
-    logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' },
-    trustProxy: env.NODE_ENV === 'production',
-    bodyLimit: 1_048_576,
-  });
+export function buildApp(): Express {
+  const app = express();
+  const isProduction = env.NODE_ENV === 'production';
 
-  await app.register(helmet);
-  await app.register(cors, {
+  app.disable('x-powered-by');
+  if (isProduction) app.set('trust proxy', true);
+
+  app.use(pinoHttp({ logger }));
+  // Over plain HTTP on a non-localhost origin, browsers ignore COOP and upgrade-insecure-requests/HSTS break asset loading.
+  app.use(helmet(isProduction ? {} : {
+    crossOriginOpenerPolicy: false,
+    originAgentCluster: false,
+    strictTransportSecurity: false,
+    contentSecurityPolicy: {
+      directives: { upgradeInsecureRequests: null },
+    },
+  }));
+  app.use(cors({
     origin: env.CORS_ORIGIN.split(',').map((origin) => origin.trim()),
     credentials: true,
+  }));
+  app.use(express.json({ limit: '1mb' }));
+
+  app.get('/', (_request, reply) => {
+    reply.json({
+      name: 'Flava API',
+      version: '0.1.0',
+      docs: '/docs',
+    });
   });
 
-  app.get('/', async () => ({
-    name: 'Flava API',
-    version: '0.1.0',
-    docs: 'API documentation will be added with the first feature module.',
+  app.get('/docs/json', (_request, reply) => {
+    reply.json(openApiDocument);
+  });
+  app.get('/docs/favicon.svg', (_request, reply) => {
+    reply.type('image/svg+xml').send(flavaLogoSvg);
+  });
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument, {
+    customSiteTitle: 'Flava API Docs',
+    customfavIcon: '/docs/favicon.svg',
   }));
 
-  await registerHealthRoutes(app);
+  app.use(createHealthRouter());
+  app.use(createAuthRouter());
 
-  app.setNotFoundHandler((_request, reply) => {
-    return reply.code(404).send({ error: 'Not found' });
+  app.use((_request, reply) => {
+    reply.status(404).json({ error: 'Not found' });
   });
 
-  app.setErrorHandler((error, _request, reply) => {
-    app.log.error({ err: error }, 'Unhandled request error');
+  const errorHandler: ErrorRequestHandler = (error: Error & { statusCode?: number; type?: string }, request, reply, next) => {
+    if (reply.headersSent) {
+      next(error);
+      return;
+    }
+    request.log.error({ err: error }, 'Unhandled request error');
     const statusCode = error.statusCode && error.statusCode >= 400 && error.statusCode < 500
       ? error.statusCode
       : 500;
-    return reply.code(statusCode).send({
-      error: statusCode === 500 ? 'Internal server error' : error.message,
+    let message = error.message;
+    if (error.type === 'entity.parse.failed') message = 'Invalid request body';
+    reply.status(statusCode).json({
+      error: statusCode === 500 ? 'Internal server error' : message,
     });
-  });
+  };
+  app.use(errorHandler);
 
   return app;
 }

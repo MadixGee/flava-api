@@ -6,7 +6,7 @@ Backend scaffold for Flava, an Expo mobile app for emerging South African artist
 
 - Node.js 22+
 - TypeScript (strict mode)
-- Fastify 5
+- Express 5
 - PostgreSQL 17
 - Drizzle ORM + Drizzle Kit
 - Zod environment validation
@@ -27,6 +27,9 @@ npm run db:generate
 npm run db:migrate
 npm run dev
 ```
+
+Interactive Swagger docs are served at `http://localhost:3000/docs`. `POST /auth/email/signup` returns
+`200` (user created), `400` (invalid email or password) or `409` (email already registered).
 
 API runs at `http://localhost:3000` by default.
 
@@ -49,7 +52,7 @@ npm run db:studio
 
 ```text
 src/
-  app.ts              Fastify app setup (also used by tests)
+  app.ts              Express app setup (also used by tests)
   server.ts           Runtime entry point and graceful shutdown
   config/env.ts       Validated environment configuration
   db/
@@ -71,10 +74,32 @@ test/
 - A verified `+27` number demonstrates control of a South African-numbered phone, not nationality or residency.
 - Do not deploy with the example database password. Use managed secrets and a least-privilege database user in hosted environments.
 
-## Next implementation slice
+## Authentication
 
-1. Define account and verified-phone tables, with phone numbers normalized to E.164.
-2. Add an OTP provider adapter, request/verify endpoints, expiration, attempt limits, resend cooldowns and anti-abuse controls.
-3. Add opaque server-side sessions with rotation and revocation.
-4. Add recovery codes and a carefully audited account-recovery workflow before artists can accumulate valuable content.
+The first authentication slice provides email/password signup and login, email
+verification, password reset, short-lived JWT access tokens, rotating opaque
+refresh tokens, logout/revocation, and per-user session listing/revocation.
+OAuth, phone OTP, and phone-number changes are not implemented yet. Lost-phone
+recovery is support-managed; there is no self-service phone recovery.
+
+Set `AUTH_JWT_SECRET` to a cryptographically random value of at least 32
+characters. Email verification and password-reset messages require all SMTP
+settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`);
+delivery errors are logged without logging the email token. In production,
+SMTP settings are mandatory. Access tokens expire after 15 minutes by default,
+refresh tokens after 30 days, and email tokens after 60 minutes; these values
+can be changed with the corresponding `AUTH_*_TTL_*` environment variables.
+Passwords require at least 8 characters, and auth endpoints are rate limited by
+IP and (where applicable) normalized email using PostgreSQL-backed counters.
+
+Run `npm run db:generate` and `npm run db:migrate` after configuring
+`DATABASE_URL`. Signup currently creates a neutral `New listener` profile and
+generated username because profile completion belongs to a later API slice.
+
+## Next implementation slices
+
+1. Add a transactional email outbox and configurable email delivery workflows.
+2. Add verified phone identities and an OTP provider adapter, with expiration, attempt limits, resend cooldowns and anti-abuse controls.
+3. Add verified Google and Facebook identity linking.
+4. Add phone-number change, payout cooldown, and carefully audited lost-phone support workflows.
 5. Add artist profile APIs, then signed audio upload and track metadata.

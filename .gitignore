@@ -2,5 +2,10 @@ node_modules/
 dist/
 .env
 coverage/
-drizzle/
+drizzle/*
+!drizzle/
+!drizzle/*.sql
+!drizzle/meta/
+drizzle/meta/*
+!drizzle/meta/*.json
 .DS_Store

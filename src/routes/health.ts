@@ -1,20 +1,27 @@
-import type { FastifyInstance } from 'fastify';
+import { Router } from 'express';
 import { sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
+import { logger } from '../logger.js';
 
-export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/health/live', async () => ({ status: 'ok' }));
+export function createHealthRouter(): Router {
+  const router = Router();
 
-  app.get('/health/ready', async (_request, reply) => {
+  router.get('/health/live', (_request, reply) => {
+    reply.json({ status: 'ok' });
+  });
+
+  router.get('/health/ready', async (_request, reply) => {
     try {
       await db.execute(sql`select 1`);
-      return { status: 'ok', dependencies: { database: 'ok' } };
+      reply.json({ status: 'ok', dependencies: { database: 'ok' } });
     } catch (error) {
-      app.log.error({ err: error }, 'Readiness check failed');
-      return reply.code(503).send({
+      logger.error({ err: error }, 'Readiness check failed');
+      reply.status(503).json({
         status: 'error',
         dependencies: { database: 'unavailable' },
       });
     }
   });
+
+  return router;
 }
